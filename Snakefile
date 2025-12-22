@@ -1,78 +1,91 @@
 configfile: "config/config.yaml"
 
-from collections import Counter
 from pathlib import Path
-import os
 
 INPUT_DIRS = config.get("input_dirs", [])
 if isinstance(INPUT_DIRS, str):
     INPUT_DIRS = [INPUT_DIRS]
-if not INPUT_DIRS:
-    raise ValueError("config.yaml must define input_dirs with one or more directories")
-if not isinstance(INPUT_DIRS, list):
-    raise ValueError("input_dirs must be a list of directory paths")
+if not INPUT_DIRS or not isinstance(INPUT_DIRS, list):
+    raise ValueError("config.yaml must define input_dirs as a non-empty list")
 
-LOG_DIR = config.get("log_dir", "logs/slurm")
-VG_DIR = config.get("vg_dir")
-if VG_DIR:
-    VG_BIN = str(Path(VG_DIR) / "vg")
-else:
-    VG_BIN = "vg"
+LOG_DIR = config.get("log_dir", "logs/slurm")  # you can keep this if you want
+FILTER_SCRIPT = config.get("filter_script", "scripts/filter_gam.sh")
+GAMTOJSON_SCRIPT = config.get("gamtojson_script", "scripts/gam_to_json.sh")
 
-
-def discover_gam_files(input_dirs):
-    gam_files = []
-    for dir_path in input_dirs:
-        p = Path(dir_path)
+def discover_gams(dirs):
+    gams = []
+    for d in dirs:
+        p = Path(d).resolve()
         if not p.exists():
-            raise ValueError(f"Input dir not found: {dir_path}")
+            raise ValueError(f"Input dir not found: {p}")
         if not p.is_dir():
-            raise ValueError(f"Input dir is not a directory: {dir_path}")
-        for gam in sorted(p.rglob("*.gam")):
-            if gam.is_file():
-                gam_files.append(str(gam.resolve()))
-    gam_files = sorted(set(gam_files))
-    if not gam_files:
-        raise ValueError("No .gam files found in input_dirs")
-    return gam_files
+            raise ValueError(f"Input path is not a directory: {p}")
 
+        for f in sorted(p.glob("*.gam")):
+            if f.name.endswith("_filtered.gam"):
+                continue
+            if f.is_file():
+                gams.append(str(f.resolve()))
 
-def sample_from_path(path):
-    return Path(path).stem
+    gams = sorted(set(gams))
+    if not gams:
+        raise ValueError("No .gam files found directly inside input_dirs")
+    return gams
 
+def filtered_path(gam_path: str) -> str:
+    p = Path(gam_path)
+    return str(p.with_name(p.stem + "_filtered" + p.suffix))
 
-INPUT_DIRS = [str(Path(p).resolve()) for p in INPUT_DIRS]
+GAM_FILES = discover_gams(INPUT_DIRS)
+FILTERED_GAMS = [filtered_path(g) for g in GAM_FILES]
 
-parent_dirs = [str(Path(p).parent) for p in INPUT_DIRS]
-common_parent = Path(os.path.commonpath(parent_dirs))
-RESULTS_DIR = str(common_parent / "results")
-
-GAM_FILES = discover_gam_files(INPUT_DIRS)
-sample_names = [sample_from_path(p) for p in GAM_FILES]
-counts = Counter(sample_names)
-dups = sorted([name for name, count in counts.items() if count > 1])
-if dups:
-    raise ValueError(f"Duplicate sample names from .gam files: {', '.join(dups)}")
-
-SAMPLES = dict(zip(sample_names, GAM_FILES))
-MANIFEST = f"{RESULTS_DIR}/input_manifest.tsv"
+FILTERED_JSONS = [
+    str(Path(g).parent / "results" / "json" / (Path(g).stem + ".json"))
+    for g in FILTERED_GAMS
+]
 
 
 rule all:
     input:
-        MANIFEST
+        FILTERED_JSONS
 
-
-rule input_manifest:
+rule filter_gam:
     input:
-        GAM_FILES
+        gam="{dir}/{stem}.gam"
     output:
-        MANIFEST
+        filtered="{dir}/{stem}_filtered.gam"
+    threads: 4
+    resources:
+        mem_mb=20000,
+        time="12:00:00"
     log:
-        f"{LOG_DIR}/input_manifest.log"
+        "{dir}/results/logs/{stem}.filter.log"
+    wildcard_constraints:
+        dir=".+",
+        stem="[^/]+"
+    shell:
+        r"""
+        mkdir -p "$(dirname {log})"
+        bash scripts/filter_gam.sh {input.gam} {output.filtered} &> {log}
+        """
+
+rule gam_to_json:
+    input:
+        gam="{dir}/{stem}_filtered.gam"
+    output:
+        json="{dir}/results/json/{stem}_filtered.json"
     threads: 1
     resources:
-        mem_mb=512,
-        time="00:05:00"
+        mem_mb=4000,
+        time="02:00:00"
+    log:
+        "{dir}/results/logs/{stem}.gam_to_json.log"
+    wildcard_constraints:
+        dir=".+",
+        stem="[^/]+"
     shell:
-        "python scripts/write_input_manifest.py --output {output} {input}"
+        r"""
+        mkdir -p "$(dirname {output.json})" "$(dirname {log})"
+        bash scripts/gam_to_json.sh {input.gam} {output.json} &> {log}
+        """
+
