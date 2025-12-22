@@ -1,0 +1,13 @@
+configfile: config/config.yaml
+executor: slurm
+jobs: 200
+latency-wait: 60
+rerun-incomplete: true
+printshellcmds: true
+default-resources:
+  - slurm_account=gerstein
+  - slurm_partition=day
+  - mem_mb=2000
+  - time="01:00:00"
+  - slurm_output="logs/slurm/%x.%j.out"
+  - slurm_error="logs/slurm/%x.%j.err"
