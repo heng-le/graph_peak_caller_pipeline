@@ -13,6 +13,8 @@ if not INPUT_DIRS or not isinstance(INPUT_DIRS, list):
 LOG_DIR = config.get("log_dir", "logs/slurm")  
 FILTER_SCRIPT = config.get("filter_script", "scripts/filter_gam.sh")
 GAMTOJSON_SCRIPT = config.get("gamtojson_script", "scripts/gam_to_json.sh")
+GRAPH_DIR = config.get("graph_dir", "")
+CHROMOSOMES = config.get("chromosomes", [])
 
 def discover_gams(dirs):
     gams = []
@@ -71,19 +73,24 @@ for _json_path in FILTERED_JSONS:
     _group_name = group_key_from_filtered_json(_json_path)
     GROUPS_BY_DIR[(_input_dir, _group_name)].append(_json_path)
 
-# Sort the JSON lists within each group
 for _key in GROUPS_BY_DIR:
     GROUPS_BY_DIR[_key] = sorted(GROUPS_BY_DIR[_key])
 
-# Generate combined output paths for each (input_dir, group) pair
 COMBINED_JSONS = [
     str(Path(input_dir) / "results" / "json_combined" / group / f"{group}_combined.json")
     for input_dir, group in sorted(GROUPS_BY_DIR.keys())
 ]
 
+
+SPLIT_JSONS = [
+    str(Path(input_dir) / "results" / "json_combined" / group / f"{group}_combined_{chrom}.json")
+    for input_dir, group in sorted(GROUPS_BY_DIR.keys())
+    for chrom in CHROMOSOMES
+]
+
 rule all:
     input:
-        COMBINED_JSONS
+        SPLIT_JSONS
 
 rule filter_gam:
     input:
@@ -150,7 +157,7 @@ rule combine_jsons:
     output:
         combined="{dir}/results/json_combined/{group}/{group}_combined.json"
     wildcard_constraints:
-        dir=".+",
+        dir=".+?",
         group="[^/]+"
     threads: 1
     resources:
@@ -160,3 +167,49 @@ rule combine_jsons:
         "logs/slurm/combine_jsons/{group}_{dir}.log"
     run:
         cat_json_files(input.jsons, output.combined)
+
+
+def split_outputs_for_combined(wildcards):
+    base = Path(wildcards.dir) / "results" / "json_combined" / wildcards.group / f"{wildcards.group}_combined"
+    return [f"{base}_{chrom}.json" for chrom in CHROMOSOMES]
+
+def group_to_enc(group: str) -> str:
+    enc = group.split("_")[-2]
+    if not re.fullmatch(r"enc\d+", enc):
+        raise ValueError(f"Expected enc### as second-to-last token in group, got {enc} from {group}")
+    return enc
+
+GRAPH_DIR = config["graph_dir"]
+CHROMOSOMES = config["chromosomes"]
+
+rule split_by_chromosome:
+    input:
+        combined="{dir}/results/json_combined/{group}/{group}_combined.json"
+    output:
+        split=expand(
+            "{dir}/results/json_combined/{group}/{group}_combined_{chrom}.json",
+            chrom=CHROMOSOMES,
+            allow_missing=True
+        )
+    wildcard_constraints:
+        dir=".+?",
+        group="[^/]+"
+    threads: 1
+    resources:
+        mem_mb=8000,
+        runtime=240
+    log:
+        "{dir}/results/logs/split_by_chromosome/{group}.log"
+    params:
+        chromosomes=",".join(CHROMOSOMES),
+        graph_dir=lambda wc: str(Path(config["graph_dir"]) / group_to_enc(wc.group)) + "/",
+        env="/gpfs/gibbs/pi/gerstein/hc865/cvenv"
+    shell:
+        r"""
+        mkdir -p "$(dirname {log})"
+        bash scripts/split_by_chromosome.sh \
+          {input.combined} \
+          "{params.chromosomes}" \
+          "{params.graph_dir}" \
+          "{params.env}" &> {log}
+        """

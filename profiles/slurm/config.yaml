@@ -1,4 +1,3 @@
-configfile: config/config.yaml
 executor: slurm
 jobs: 200
 latency-wait: 60
