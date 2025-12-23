@@ -1,6 +1,8 @@
-configfile: "config/config.yaml"
-
 from pathlib import Path
+import re
+from collections import defaultdict
+
+configfile: "config/config.yaml"
 
 INPUT_DIRS = config.get("input_dirs", [])
 if isinstance(INPUT_DIRS, str):
@@ -8,7 +10,7 @@ if isinstance(INPUT_DIRS, str):
 if not INPUT_DIRS or not isinstance(INPUT_DIRS, list):
     raise ValueError("config.yaml must define input_dirs as a non-empty list")
 
-LOG_DIR = config.get("log_dir", "logs/slurm")  # you can keep this if you want
+LOG_DIR = config.get("log_dir", "logs/slurm")  
 FILTER_SCRIPT = config.get("filter_script", "scripts/filter_gam.sh")
 GAMTOJSON_SCRIPT = config.get("gamtojson_script", "scripts/gam_to_json.sh")
 
@@ -40,14 +42,48 @@ GAM_FILES = discover_gams(INPUT_DIRS)
 FILTERED_GAMS = [filtered_path(g) for g in GAM_FILES]
 
 FILTERED_JSONS = [
-    str(Path(g).parent / "results" / "json" / (Path(g).stem + ".json"))
-    for g in FILTERED_GAMS
+    str(Path(g).parent / "results" / "json" / f"{Path(g).stem}_filtered.json")
+    for g in GAM_FILES
 ]
 
+_rep_suffix_re = re.compile(
+    r"_(single|paired)_rep\d+_mapped_filtered\.json$"
+)
+
+def group_key_from_filtered_json(p: str) -> str:
+    name = Path(p).name
+    key = _rep_suffix_re.sub("", name)
+    if key == name:
+        raise ValueError(f"Path does not match expected pattern *single/paired_repN_mapped_filtered.json: {p}")
+    return key
+
+def get_input_dir_for_json(json_path: str) -> str:
+    """Get the input directory root for a filtered JSON path.
+    JSON is at: {input_dir}/results/json/{name}.json
+    So input_dir is 3 levels up from the JSON.
+    """
+    return str(Path(json_path).parent.parent.parent)
+
+# Group JSONs by (input_dir, group_name) so each directory is processed independently
+GROUPS_BY_DIR = defaultdict(list)
+for _json_path in FILTERED_JSONS:
+    _input_dir = get_input_dir_for_json(_json_path)
+    _group_name = group_key_from_filtered_json(_json_path)
+    GROUPS_BY_DIR[(_input_dir, _group_name)].append(_json_path)
+
+# Sort the JSON lists within each group
+for _key in GROUPS_BY_DIR:
+    GROUPS_BY_DIR[_key] = sorted(GROUPS_BY_DIR[_key])
+
+# Generate combined output paths for each (input_dir, group) pair
+COMBINED_JSONS = [
+    str(Path(input_dir) / "results" / "json_combined" / group / f"{group}_combined.json")
+    for input_dir, group in sorted(GROUPS_BY_DIR.keys())
+]
 
 rule all:
     input:
-        FILTERED_JSONS
+        COMBINED_JSONS
 
 rule filter_gam:
     input:
@@ -57,7 +93,7 @@ rule filter_gam:
     threads: 4
     resources:
         mem_mb=20000,
-        time="12:00:00"
+        runtime= 720 # in minutes
     log:
         "{dir}/results/logs/{stem}.filter.log"
     wildcard_constraints:
@@ -77,7 +113,7 @@ rule gam_to_json:
     threads: 1
     resources:
         mem_mb=4000,
-        time="02:00:00"
+        runtime= 120
     log:
         "{dir}/results/logs/{stem}.gam_to_json.log"
     wildcard_constraints:
@@ -89,3 +125,38 @@ rule gam_to_json:
         bash scripts/gam_to_json.sh {input.gam} {output.json} &> {log}
         """
 
+
+def cat_json_files(json_paths, output_file):
+    output_file = Path(output_file)
+    with open(output_file, "wb") as out_f:
+        for path in json_paths:
+            path = Path(path)
+            with open(path, "rb") as in_f:
+                out_f.write(in_f.read())
+
+
+def inputs_for_group(wildcards):
+    """Return the list of filtered JSONs for a specific (dir, group) pair."""
+    input_dir = wildcards.dir
+    prefix = wildcards.group
+    key = (input_dir, prefix)
+    if key not in GROUPS_BY_DIR:
+        raise ValueError(f"No filtered JSONs found for dir={input_dir}, group={prefix}")
+    return GROUPS_BY_DIR[key]
+
+rule combine_jsons:
+    input:
+        jsons=inputs_for_group
+    output:
+        combined="{dir}/results/json_combined/{group}/{group}_combined.json"
+    wildcard_constraints:
+        dir=".+",
+        group="[^/]+"
+    threads: 1
+    resources:
+        mem_mb=50000,
+        runtime=120
+    log:
+        "logs/slurm/combine_jsons/{group}_{dir}.log"
+    run:
+        cat_json_files(input.jsons, output.combined)

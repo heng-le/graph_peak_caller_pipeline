@@ -1,0 +1,10 @@
+input_dirs:
+  - /gpfs/gibbs/pi/gerstein/hc865/downloads/histone_graph_calling/sm_test
+  - /gpfs/gibbs/pi/gerstein/hc865/downloads/histone_graph_calling/sm_test_2
+
+log_dir: logs/slurm
+
+filter_script: scripts/filter_gam.sh
+gamtojson_script: scripts/gam_to_json.sh
+
+graph_dir: /gpfs/gibbs/pi/gerstein/hc865/downloads/vg_giraffe/vg_graphs_a

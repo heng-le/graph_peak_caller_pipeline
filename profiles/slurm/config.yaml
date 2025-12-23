@@ -7,7 +7,7 @@ printshellcmds: true
 default-resources:
   - slurm_account=gerstein
   - slurm_partition=day
-  - mem_mb=2000
-  - time="01:00:00"
+  - mem_mb=20000
+  - runtime=1440
   - slurm_output="logs/slurm/%x.%j.out"
   - slurm_error="logs/slurm/%x.%j.err"
