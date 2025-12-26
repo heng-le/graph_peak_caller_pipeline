@@ -16,6 +16,8 @@ GAMTOJSON_SCRIPT = config.get("gamtojson_script", "scripts/gam_to_json.sh")
 GRAPH_DIR = config.get("graph_dir", "")
 CHROMOSOMES = config.get("chromosomes", [])
 GPC_ENV = config.get("gpc_env", "")
+GENOME_SIZE = int(config.get("genome_size", 3100000000))
+READ_LENGTH = int(config.get("read_length", 101))
 
 if not CHROMOSOMES:
     raise ValueError("config.yaml must define chromosomes as a non-empty list")
@@ -88,6 +90,16 @@ COMBINED_JSONS = [
     for input_dir, group in sorted(GROUPS_BY_DIR.keys())
 ]
 
+def split_outputs_for_combined(wildcards):
+    base = Path(wildcards.dir) / "results" / "json_combined" / wildcards.group / f"{wildcards.group}_combined"
+    return [f"{base}_{chrom}.json" for chrom in CHROMOSOMES]
+
+def group_to_enc(group: str) -> str:
+    enc = group.split("_")[-2]
+    if not re.fullmatch(r"enc\d+", enc):
+        raise ValueError(f"Expected enc### as second-to-last token in group, got {enc} from {group}")
+    return enc
+
 
 SPLIT_JSONS = [
     str(Path(input_dir) / "results" / "json_combined" / group / f"{group}_combined_{chrom}.json")
@@ -105,6 +117,9 @@ def is_exp_target(input_dir: str, group: str) -> bool:
         return False
     return re.search(r"(?:^|/|_)exp(?:/|_|$)", s) is not None
 
+def graph_dir_for_group(group: str) -> str:
+    return str(Path(config["graph_dir"]) / group_to_enc(group)) + "/"
+
 
 EXP_GROUP_KEYS = [
     (input_dir, group)
@@ -117,12 +132,93 @@ EXP_METRICS = [
     for (input_dir, group) in sorted(EXP_GROUP_KEYS)
 ]
 
+def cat_json_files(json_paths, output_file): 
+    output_file = Path(output_file) 
+    with open(output_file, "wb") as out_f: 
+        for path in json_paths: 
+            path = Path(path) 
+            with open(path, "rb") as in_f: 
+                out_f.write(in_f.read()) 
+
+def inputs_for_group(wildcards): 
+    """Return the list of filtered JSONs for a specific (dir, group) pair.""" 
+    input_dir = wildcards.dir 
+    prefix = wildcards.group 
+    key = (input_dir, prefix) 
+    if key not in GROUPS_BY_DIR: 
+        raise ValueError(f"No filtered JSONs found for dir={input_dir}, group={prefix}") 
+    return GROUPS_BY_DIR[key] 
+
+def exp_group_to_control(group: str) -> str:
+    """Convert EXP group name to matching CONTROL group name by token replacement."""
+    g = group
+    if re.search(r"(?:^|_)control(?:_|$)", g.lower()):
+        raise ValueError(f"Expected EXP group, got CONTROL-like group: {group}")
+
+    out = re.sub(r"(^|_)exp(_|$)", r"\1control\2", g, flags=re.IGNORECASE)
+    if out == g:
+        raise ValueError(f"Could not derive CONTROL group from EXP group: {group}")
+    return out
+
+
+def find_control_dir_for_exp(exp_dir: str, exp_group: str) -> str:
+    """
+    Find which input_dir contains the matching control group.
+    If multiple exist, prefer same parent directory as exp_dir.
+    """
+    ctrl_group = exp_group_to_control(exp_group)
+    candidates = [d for (d, g) in GROUPS_BY_DIR.keys() if g == ctrl_group]
+    if not candidates:
+        raise ValueError(f"No CONTROL group found for EXP group={exp_group} (expected {ctrl_group})")
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    exp_parent = str(Path(exp_dir).resolve().parent)
+    same_parent = [d for d in candidates if str(Path(d).resolve().parent) == exp_parent]
+    if len(same_parent) == 1:
+        return same_parent[0]
+
+    raise ValueError(
+        f"Ambiguous CONTROL dirs for {ctrl_group}. Candidates={candidates}. "
+        f"None uniquely matched parent of EXP dir={exp_dir}."
+    )
+
+
+def exp_prefix(wc) -> str:
+    return str(Path(wc.dir) / "results" / "json_combined" / wc.group / f"{wc.group}_combined_")
+
+
+def control_prefix(wc) -> str:
+    ctrl_group = exp_group_to_control(wc.group)
+    ctrl_dir = find_control_dir_for_exp(wc.dir, wc.group)
+    return str(Path(ctrl_dir) / "results" / "json_combined" / ctrl_group / f"{ctrl_group}_combined_")
+
+
+def control_split_jsons(wc):
+    ctrl_group = exp_group_to_control(wc.group)
+    ctrl_dir = find_control_dir_for_exp(wc.dir, wc.group)
+    return expand(
+        "{dir}/results/json_combined/{group}/{group}_combined_{chrom}.json",
+        dir=ctrl_dir,
+        group=ctrl_group,
+        chrom=CHROMOSOMES,
+        allow_missing=True
+    )
+
+
+EXP_CALLPEAKS_DONE = [
+    str(Path(input_dir) / "results" / "peaks" / group / "callpeaks.done")
+    for (input_dir, group) in sorted(EXP_GROUP_KEYS)
+]
 
 
 rule all:
     input:
         SPLIT_JSONS,
-        EXP_METRICS
+        EXP_METRICS,
+        EXP_CALLPEAKS_DONE
+
 
 rule filter_gam:
     input:
@@ -195,23 +291,6 @@ rule gam_to_json:
 #         bash {CONCAT_JSON_SCRIPT} {output.combined} {input.jsons} &> {log}
 #         """
 
-def cat_json_files(json_paths, output_file): 
-    output_file = Path(output_file) 
-    with open(output_file, "wb") as out_f: 
-        for path in json_paths: 
-            path = Path(path) 
-            with open(path, "rb") as in_f: 
-                out_f.write(in_f.read()) 
-
-def inputs_for_group(wildcards): 
-    """Return the list of filtered JSONs for a specific (dir, group) pair.""" 
-    input_dir = wildcards.dir 
-    prefix = wildcards.group 
-    key = (input_dir, prefix) 
-    if key not in GROUPS_BY_DIR: 
-        raise ValueError(f"No filtered JSONs found for dir={input_dir}, group={prefix}") 
-    return GROUPS_BY_DIR[key] 
-
 rule combine_jsons: 
     input: 
         jsons=inputs_for_group 
@@ -227,16 +306,6 @@ rule combine_jsons:
     log: "logs/slurm/combine_jsons/{group}_{dir}.log" 
 
     run: cat_json_files(input.jsons, output.combined)
-
-def split_outputs_for_combined(wildcards):
-    base = Path(wildcards.dir) / "results" / "json_combined" / wildcards.group / f"{wildcards.group}_combined"
-    return [f"{base}_{chrom}.json" for chrom in CHROMOSOMES]
-
-def group_to_enc(group: str) -> str:
-    enc = group.split("_")[-2]
-    if not re.fullmatch(r"enc\d+", enc):
-        raise ValueError(f"Expected enc### as second-to-last token in group, got {enc} from {group}")
-    return enc
 
 rule split_by_chromosome:
     input:
@@ -269,11 +338,6 @@ rule split_by_chromosome:
           "{params.graph_dir}" \
           "{params.env}" &> {log}
         """
-
-
-
-def graph_dir_for_group(group: str) -> str:
-    return str(Path(config["graph_dir"]) / group_to_enc(group)) + "/"
 
 
 rule unique_read_count_exp:
@@ -362,3 +426,51 @@ rule write_exp_metrics:
             f"unique_reads\t{unique_reads}\nread_length\t{read_length}\nskip_tissue\t{skip_tissue}\n"
         )
         Path(log[0]).write_text(f"Wrote {output.metrics}\n")
+
+
+rule callpeaks_exp:
+    input:
+        metrics="{dir}/results/metrics/{group}/exp_metrics.txt",
+        exp_split=expand(
+            "{dir}/results/json_combined/{group}/{group}_combined_{chrom}.json",
+            chrom=CHROMOSOMES,
+            allow_missing=True
+        ),
+        ctrl_split=control_split_jsons
+    output:
+        done="{dir}/results/peaks/{group}/callpeaks.done"
+    wildcard_constraints:
+        dir=".+?",
+        group="[^/]+"
+    threads: 8
+    resources:
+        mem_mb=64000,
+        runtime=1440
+    log:
+        "{dir}/results/logs/callpeaks/{group}.log"
+    params:
+        chromosomes=",".join(CHROMOSOMES),
+        graph_dir=lambda wc: graph_dir_for_group(wc.group),
+        exp_prefix=exp_prefix,
+        ctrl_prefix=control_prefix,
+        out_dir=lambda wc: str(Path(wc.dir) / "results" / "peaks" / wc.group),
+        genome_size=GENOME_SIZE,
+        read_length=READ_LENGTH,
+        env=GPC_ENV
+    shell:
+        r"""
+        mkdir -p "$(dirname {log})" "{params.out_dir}"
+        bash scripts/callpeaks.sh \
+          "{input.metrics}" \
+          "{params.chromosomes}" \
+          "{params.graph_dir}" \
+          "{params.exp_prefix}" \
+          "{params.ctrl_prefix}" \
+          "{params.out_dir}" \
+          "{params.genome_size}" \
+          "{params.read_length}" \
+          "{params.env}" \
+          "{threads}" \
+          "{output.done}" \
+          &> "{log}"
+        """

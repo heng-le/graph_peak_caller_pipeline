@@ -34,3 +34,6 @@ chromosomes:
   - chr22
   - chrX
   - chrY
+
+genome_size: 3100000000
+read_length: 101
