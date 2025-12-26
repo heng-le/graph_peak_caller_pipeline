@@ -6,7 +6,7 @@ log_dir: logs/slurm
 
 filter_script: scripts/filter_gam.sh
 gamtojson_script: scripts/gam_to_json.sh
-
+gpc_env: /gpfs/gibbs/pi/gerstein/hc865/cvenv/
 graph_dir: /gpfs/gibbs/pi/gerstein/hc865/downloads/vg_giraffe/vg_graphs_a
 
 chromosomes:

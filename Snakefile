@@ -15,6 +15,13 @@ FILTER_SCRIPT = config.get("filter_script", "scripts/filter_gam.sh")
 GAMTOJSON_SCRIPT = config.get("gamtojson_script", "scripts/gam_to_json.sh")
 GRAPH_DIR = config.get("graph_dir", "")
 CHROMOSOMES = config.get("chromosomes", [])
+GPC_ENV = config.get("gpc_env", "")
+
+if not CHROMOSOMES:
+    raise ValueError("config.yaml must define chromosomes as a non-empty list")
+
+if not GRAPH_DIR:
+    raise ValueError("config.yaml must define graph_dir")
 
 def discover_gams(dirs):
     gams = []
@@ -88,9 +95,34 @@ SPLIT_JSONS = [
     for chrom in CHROMOSOMES
 ]
 
+def is_exp_target(input_dir: str, group: str) -> bool:
+    """
+    True for EXP, False for CONTROL.
+    We check both the directory path and the group name for robust matching.
+    """
+    s = f"{input_dir}/{group}".lower()
+    if re.search(r"(?:^|/|_)control(?:/|_|$)", s):
+        return False
+    return re.search(r"(?:^|/|_)exp(?:/|_|$)", s) is not None
+
+
+EXP_GROUP_KEYS = [
+    (input_dir, group)
+    for (input_dir, group) in GROUPS_BY_DIR.keys()
+    if is_exp_target(input_dir, group)
+]
+
+EXP_METRICS = [
+    str(Path(input_dir) / "results" / "metrics" / group / "exp_metrics.txt")
+    for (input_dir, group) in sorted(EXP_GROUP_KEYS)
+]
+
+
+
 rule all:
     input:
-        SPLIT_JSONS
+        SPLIT_JSONS,
+        EXP_METRICS
 
 rule filter_gam:
     input:
@@ -133,41 +165,68 @@ rule gam_to_json:
         """
 
 
-def cat_json_files(json_paths, output_file):
-    output_file = Path(output_file)
-    with open(output_file, "wb") as out_f:
-        for path in json_paths:
-            path = Path(path)
-            with open(path, "rb") as in_f:
-                out_f.write(in_f.read())
+# def inputs_for_group(wildcards):
+#     """Return the list of filtered JSONs for a specific (dir, group) pair."""
+#     input_dir = wildcards.dir
+#     prefix = wildcards.group
+#     key = (input_dir, prefix)
+#     if key not in GROUPS_BY_DIR:
+#         raise ValueError(f"No filtered JSONs found for dir={input_dir}, group={prefix}")
+#     return GROUPS_BY_DIR[key]
 
 
-def inputs_for_group(wildcards):
-    """Return the list of filtered JSONs for a specific (dir, group) pair."""
-    input_dir = wildcards.dir
-    prefix = wildcards.group
-    key = (input_dir, prefix)
-    if key not in GROUPS_BY_DIR:
-        raise ValueError(f"No filtered JSONs found for dir={input_dir}, group={prefix}")
-    return GROUPS_BY_DIR[key]
+# rule combine_jsons:
+#     input:
+#         jsons=inputs_for_group
+#     output:
+#         combined="{dir}/results/json_combined/{group}/{group}_combined.json"
+#     wildcard_constraints:
+#         dir=".+?",
+#         group="[^/]+"
+#     threads: 1
+#     resources:
+#         mem_mb=50000,
+#         runtime=120
+#     log:
+#         "logs/slurm/combine_jsons/{group}_{dir}.log"
+#     shell:
+#         r"""
+#         mkdir -p "$(dirname {log})"
+#         bash {CONCAT_JSON_SCRIPT} {output.combined} {input.jsons} &> {log}
+#         """
 
-rule combine_jsons:
-    input:
-        jsons=inputs_for_group
-    output:
-        combined="{dir}/results/json_combined/{group}/{group}_combined.json"
-    wildcard_constraints:
-        dir=".+?",
-        group="[^/]+"
-    threads: 1
-    resources:
-        mem_mb=50000,
-        runtime=120
-    log:
-        "logs/slurm/combine_jsons/{group}_{dir}.log"
-    run:
-        cat_json_files(input.jsons, output.combined)
+def cat_json_files(json_paths, output_file): 
+    output_file = Path(output_file) 
+    with open(output_file, "wb") as out_f: 
+        for path in json_paths: 
+            path = Path(path) 
+            with open(path, "rb") as in_f: 
+                out_f.write(in_f.read()) 
 
+def inputs_for_group(wildcards): 
+    """Return the list of filtered JSONs for a specific (dir, group) pair.""" 
+    input_dir = wildcards.dir 
+    prefix = wildcards.group 
+    key = (input_dir, prefix) 
+    if key not in GROUPS_BY_DIR: 
+        raise ValueError(f"No filtered JSONs found for dir={input_dir}, group={prefix}") 
+    return GROUPS_BY_DIR[key] 
+
+rule combine_jsons: 
+    input: 
+        jsons=inputs_for_group 
+    output: 
+        combined="{dir}/results/json_combined/{group}/{group}_combined.json" 
+    wildcard_constraints: 
+        dir=".+?", 
+        group="[^/]+" 
+    threads: 1 
+    resources: 
+        mem_mb=50000, 
+        runtime=120 
+    log: "logs/slurm/combine_jsons/{group}_{dir}.log" 
+
+    run: cat_json_files(input.jsons, output.combined)
 
 def split_outputs_for_combined(wildcards):
     base = Path(wildcards.dir) / "results" / "json_combined" / wildcards.group / f"{wildcards.group}_combined"
@@ -178,9 +237,6 @@ def group_to_enc(group: str) -> str:
     if not re.fullmatch(r"enc\d+", enc):
         raise ValueError(f"Expected enc### as second-to-last token in group, got {enc} from {group}")
     return enc
-
-GRAPH_DIR = config["graph_dir"]
-CHROMOSOMES = config["chromosomes"]
 
 rule split_by_chromosome:
     input:
@@ -213,3 +269,96 @@ rule split_by_chromosome:
           "{params.graph_dir}" \
           "{params.env}" &> {log}
         """
+
+
+
+def graph_dir_for_group(group: str) -> str:
+    return str(Path(config["graph_dir"]) / group_to_enc(group)) + "/"
+
+
+rule unique_read_count_exp:
+    input:
+        combined="{dir}/results/json_combined/{group}/{group}_combined.json"
+    output:
+        unique_read_count="{dir}/results/metrics/{group}/unique_read_count.txt"
+    wildcard_constraints:
+        dir=".+?",
+        group="[^/]+"
+    threads: 1
+    resources:
+        mem_mb=16000,
+        runtime=240
+    log:
+        "{dir}/results/logs/metrics/{group}.unique_read_count.log"
+    shell:
+        r"""
+        mkdir -p "$(dirname {log})"
+        bash scripts/unique_read_count.sh {input.combined} {output.unique_read_count} &> {log}
+        """
+
+rule estimate_shift_exp:
+    input:
+        split=expand(
+            "{dir}/results/json_combined/{group}/{group}_combined_{chrom}.json",
+            chrom=CHROMOSOMES,
+            allow_missing=True
+        )
+    output:
+        logtxt="{dir}/results/metrics/{group}/estimate_shift_exp.txt",
+        read_length="{dir}/results/metrics/{group}/read_length.txt",
+        skipflag="{dir}/results/metrics/{group}/skip_tissue.txt"
+    wildcard_constraints:
+        dir=".+?",
+        group="[^/]+"
+    threads: 1
+    resources:
+        mem_mb=32000,
+        runtime=480
+    params:
+        chromosomes=",".join(CHROMOSOMES),
+        graph_dir=lambda wc: graph_dir_for_group(wc.group),
+        prefix=lambda wc: str(Path(wc.dir) / "results" / "json_combined" / wc.group / f"{wc.group}_combined_"),
+        env=GPC_ENV
+    shell:
+        r"""
+        bash scripts/estimate_shift_exp.sh \
+          "{params.chromosomes}" \
+          "{params.graph_dir}" \
+          "{params.prefix}" \
+          "{params.env}" \
+          "{output.logtxt}" \
+          "{output.read_length}" \
+          "{output.skipflag}"
+        """
+
+rule write_exp_metrics:
+    input:
+        unique="{dir}/results/metrics/{group}/unique_read_count.txt",
+        readlen="{dir}/results/metrics/{group}/read_length.txt",
+        skip="{dir}/results/metrics/{group}/skip_tissue.txt"
+    output:
+        metrics="{dir}/results/metrics/{group}/exp_metrics.txt"
+    wildcard_constraints:
+        dir=".+?",
+        group="[^/]+"
+    threads: 1
+    resources:
+        mem_mb=2000,
+        runtime=30
+    log:
+        "{dir}/results/logs/metrics/{group}.exp_metrics.log"
+    run:
+        if not is_exp_target(wildcards.dir, wildcards.group):
+            raise ValueError(...)
+
+        Path(output.metrics).parent.mkdir(parents=True, exist_ok=True)
+        Path(log[0]).parent.mkdir(parents=True, exist_ok=True)
+
+        unique_reads = Path(input.unique).read_text().strip()
+        read_length  = Path(input.readlen).read_text().strip()
+        skip_tissue  = Path(input.skip).read_text().strip()
+
+        Path(output.metrics).write_text(
+            f"unique_reads\t{unique_reads}\nread_length\t{read_length}\nskip_tissue\t{skip_tissue}\n"
+        )
+        Path(log[0]).write_text(f"Wrote {output.metrics}\n")
