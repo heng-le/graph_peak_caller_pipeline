@@ -212,12 +212,19 @@ EXP_CALLPEAKS_DONE = [
     for (input_dir, group) in sorted(EXP_GROUP_KEYS)
 ]
 
+EXP_PVAL_DONE = [
+    str(Path(input_dir) / "results" / "peaks" / group / "callpeaks_pvalues.done")
+    for (input_dir, group) in sorted(EXP_GROUP_KEYS)
+]
+
+
 
 rule all:
     input:
         SPLIT_JSONS,
         EXP_METRICS,
-        EXP_CALLPEAKS_DONE
+        EXP_CALLPEAKS_DONE,
+        EXP_PVAL_DONE
 
 
 rule filter_gam:
@@ -468,6 +475,42 @@ rule callpeaks_exp:
           "{params.ctrl_prefix}" \
           "{params.out_dir}" \
           "{params.genome_size}" \
+          "{params.read_length}" \
+          "{params.env}" \
+          "{threads}" \
+          "{output.done}" \
+          &> "{log}"
+        """
+
+rule callpeaks_pvalues_exp:
+    input:
+        prev_done="{dir}/results/peaks/{group}/callpeaks.done",
+        metrics="{dir}/results/metrics/{group}/exp_metrics.txt"
+    output:
+        done="{dir}/results/peaks/{group}/callpeaks_pvalues.done"
+    wildcard_constraints:
+        dir=".+?",
+        group="[^/]+"
+    threads: 8
+    resources:
+        mem_mb=64000,
+        runtime=720
+    log:
+        "{dir}/results/logs/callpeaks_pvalues/{group}.log"
+    params:
+        chromosomes=",".join(CHROMOSOMES),
+        graph_dir=lambda wc: graph_dir_for_group(wc.group),
+        out_dir=lambda wc: str(Path(wc.dir) / "results" / "peaks" / wc.group),
+        read_length=READ_LENGTH,   # -r
+        env=GPC_ENV
+    shell:
+        r"""
+        mkdir -p "$(dirname {log})" "{params.out_dir}"
+        bash scripts/callpeaks_pvalues.sh \
+          "{input.metrics}" \
+          "{params.chromosomes}" \
+          "{params.graph_dir}" \
+          "{params.out_dir}" \
           "{params.read_length}" \
           "{params.env}" \
           "{threads}" \
