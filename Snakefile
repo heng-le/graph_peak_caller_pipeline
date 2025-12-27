@@ -217,6 +217,15 @@ EXP_PVAL_DONE = [
     for (input_dir, group) in sorted(EXP_GROUP_KEYS)
 ]
 
+EXP_CONCAT_FASTA = [
+    str(Path(input_dir) / "results" / "peaks" / group / "all_peaks.fasta")
+    for (input_dir, group) in sorted(EXP_GROUP_KEYS)
+]
+
+EXP_CONCAT_INTERVALS = [
+    str(Path(input_dir) / "results" / "peaks" / group / "all_peaks.intervalcollection")
+    for (input_dir, group) in sorted(EXP_GROUP_KEYS)
+]
 
 
 rule all:
@@ -224,7 +233,10 @@ rule all:
         SPLIT_JSONS,
         EXP_METRICS,
         EXP_CALLPEAKS_DONE,
-        EXP_PVAL_DONE
+        EXP_PVAL_DONE,
+        EXP_CONCAT_FASTA,
+        EXP_CONCAT_INTERVALS
+
 
 
 rule filter_gam:
@@ -515,5 +527,34 @@ rule callpeaks_pvalues_exp:
           "{params.env}" \
           "{threads}" \
           "{output.done}" \
+          &> "{log}"
+        """
+
+rule concat_peak_sequences:
+    input:
+        pval_done="{dir}/results/peaks/{group}/callpeaks_pvalues.done"
+    output:
+        fasta="{dir}/results/peaks/{group}/all_peaks.fasta",
+        intervals="{dir}/results/peaks/{group}/all_peaks.intervalcollection"
+    wildcard_constraints:
+        dir=".+?",
+        group="[^/]+"
+    threads: 1
+    resources:
+        mem_mb=2000,
+        runtime=30
+    log:
+        "{dir}/results/logs/concat_peaks/{group}.log"
+    params:
+        chromosomes=",".join(CHROMOSOMES),
+        out_dir=lambda wc: str(Path(wc.dir) / "results" / "peaks" / wc.group),
+        env=GPC_ENV,
+    shell:
+        r"""
+        mkdir -p "$(dirname {log})" "{params.out_dir}"
+        bash scripts/concat_peak_sequences.sh \
+          "{params.chromosomes}" \
+          "{params.out_dir}" \
+          "{params.env}" \
           &> "{log}"
         """
