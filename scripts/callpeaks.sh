@@ -36,9 +36,7 @@ if [[ -z "${unique_reads:-}" || -z "${fragment_length:-}" ]]; then
   exit 1
 fi
 
-# optional env activation
 if [[ -n "${env_path:-}" && -d "$env_path" ]]; then
-  # shellcheck disable=SC1090
   conda activate "$env_path"
 fi
 

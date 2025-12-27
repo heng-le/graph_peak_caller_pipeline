@@ -18,6 +18,8 @@ CHROMOSOMES = config.get("chromosomes", [])
 GPC_ENV = config.get("gpc_env", "")
 GENOME_SIZE = int(config.get("genome_size", 3100000000))
 READ_LENGTH = int(config.get("read_length", 101))
+FLATTEN_BEDS = config.get("flatten_beds", False)
+VG_PATH = config.get("vg_path", "")
 
 if not CHROMOSOMES:
     raise ValueError("config.yaml must define chromosomes as a non-empty list")
@@ -25,6 +27,13 @@ if not CHROMOSOMES:
 if not GRAPH_DIR:
     raise ValueError("config.yaml must define graph_dir")
 
+if not GPC_ENV:
+    raise ValueError("config.yaml must define an environment path which contains graph-peak-caller and numpy: < 1.24")
+
+if not VG_PATH:
+    raise ValueError("config.yaml must define path to a VG executable")
+
+# FUNCTIONS AND INPUT/OUTPUT DEFINITIONS
 def discover_gams(dirs):
     gams = []
     for d in dirs:
@@ -206,6 +215,20 @@ def control_split_jsons(wc):
         allow_missing=True
     )
 
+def flatten_dir(wc) -> str:
+    return str(Path(wc.dir) / "results" / "peaks" / wc.group / "flattened_out")
+
+def flatten_intervals_for_group(wc):
+    return expand(
+        "{dir}/results/peaks/{group}/flattened_out/intervals/{chrom}.interval",
+        dir=wc.dir, group=wc.group, chrom=CHROMOSOMES
+    )
+
+def flatten_beds_for_group(wc):
+    return expand(
+        "{dir}/results/peaks/{group}/flattened_out/beds/{chrom}.bed",
+        dir=wc.dir, group=wc.group, chrom=CHROMOSOMES
+    )
 
 EXP_CALLPEAKS_DONE = [
     str(Path(input_dir) / "results" / "peaks" / group / "callpeaks.done")
@@ -227,7 +250,13 @@ EXP_CONCAT_INTERVALS = [
     for (input_dir, group) in sorted(EXP_GROUP_KEYS)
 ]
 
+EXP_FLATTEN_DONE = [
+    str(Path(input_dir) / "results" / "peaks" / group / "flattened_out" / "flatten.done")
+    for (input_dir, group) in sorted(EXP_GROUP_KEYS)
+]
 
+
+# RULES
 rule all:
     input:
         SPLIT_JSONS,
@@ -235,7 +264,8 @@ rule all:
         EXP_CALLPEAKS_DONE,
         EXP_PVAL_DONE,
         EXP_CONCAT_FASTA,
-        EXP_CONCAT_INTERVALS
+        EXP_CONCAT_INTERVALS,
+        *(EXP_FLATTEN_DONE if FLATTEN_BEDS else [])
 
 
 
@@ -253,10 +283,14 @@ rule filter_gam:
     wildcard_constraints:
         dir=".+",
         stem="[^/]+"
+    params:
+        vg_path=VG_PATH
     shell:
         r"""
+        set -euo pipefail
         mkdir -p "$(dirname {log})"
-        bash scripts/filter_gam.sh {input.gam} {output.filtered} &> {log}
+        export VG_BIN="{params.vg_path}"
+        bash scripts/filter_gam.sh "{input.gam}" "{output.filtered}" &> "{log}"
         """
 
 rule gam_to_json:
@@ -273,10 +307,13 @@ rule gam_to_json:
     wildcard_constraints:
         dir=".+",
         stem="[^/]+"
+    params:
+        vg_bin=VG_PATH
     shell:
         r"""
-        mkdir -p "$(dirname {output.json})" "$(dirname {log})"
-        bash scripts/gam_to_json.sh {input.gam} {output.json} &> {log}
+        set -euo pipefail
+        mkdir -p "$(dirname "{output.json}")" "$(dirname "{log}")"
+        bash scripts/gam_to_json.sh "{input.gam}" "{output.json}" "{params.vg_bin}" &> "{log}"
         """
 
 
@@ -499,25 +536,32 @@ rule callpeaks_pvalues_exp:
         prev_done="{dir}/results/peaks/{group}/callpeaks.done",
         metrics="{dir}/results/metrics/{group}/exp_metrics.txt"
     output:
-        done="{dir}/results/peaks/{group}/callpeaks_pvalues.done"
+        done="{dir}/results/peaks/{group}/callpeaks_pvalues.done",
+        max_paths=[f"{{dir}}/results/peaks/{{group}}/{chrom}_max_paths.intervalcollection"
+                   for chrom in CHROMOSOMES],
+        all_max_paths=[f"{{dir}}/results/peaks/{{group}}/{chrom}_all_max_paths.intervalcollection"
+                       for chrom in CHROMOSOMES],
+        seqs=[f"{{dir}}/results/peaks/{{group}}/{chrom}_sequences.fasta"
+              for chrom in CHROMOSOMES]
     wildcard_constraints:
         dir=".+?",
         group="[^/]+"
     threads: 8
     resources:
-        mem_mb=64000,
-        runtime=720
+        mem_mb=1500000,
+        runtime=1440,
+        slurm_partition="bigmem"
     log:
         "{dir}/results/logs/callpeaks_pvalues/{group}.log"
     params:
         chromosomes=",".join(CHROMOSOMES),
         graph_dir=lambda wc: graph_dir_for_group(wc.group),
         out_dir=lambda wc: str(Path(wc.dir) / "results" / "peaks" / wc.group),
-        read_length=READ_LENGTH,   # -r
+        read_length=READ_LENGTH,
         env=GPC_ENV
     shell:
         r"""
-        mkdir -p "$(dirname {log})" "{params.out_dir}"
+        mkdir -p "$(dirname "{log}")" "{params.out_dir}"
         bash scripts/callpeaks_pvalues.sh \
           "{input.metrics}" \
           "{params.chromosomes}" \
@@ -557,4 +601,60 @@ rule concat_peak_sequences:
           "{params.out_dir}" \
           "{params.env}" \
           &> "{log}"
+        """
+
+rule flatten_one_chrom:
+    input:
+        peaks_ic="{dir}/results/peaks/{group}/{chrom}_max_paths.intervalcollection",
+        nobg=lambda wc: str(Path(graph_dir_for_group(wc.group).rstrip("/")) / f"{wc.chrom}.nobg"),
+        graph_json=lambda wc: str(Path(graph_dir_for_group(wc.group).rstrip("/")) / f"{wc.chrom}.json"),
+        pval_done="{dir}/results/peaks/{group}/callpeaks_pvalues.done"
+    output:
+        interval="{dir}/results/peaks/{group}/flattened_out/intervals/{chrom}.interval",
+        bed="{dir}/results/peaks/{group}/flattened_out/beds/{chrom}.bed"
+    wildcard_constraints:
+        dir=".+?",
+        group="[^/]+"
+    threads: 1
+    resources:
+        mem_mb=80000,
+        runtime=120,
+        slurm_partition="day"   
+    log:
+        "{dir}/results/logs/flatten_peaks/{group}.{chrom}.log"
+    params:
+        env=GPC_ENV
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "$(dirname {log})"
+        bash scripts/flatten_one_chrom.sh \
+          "{input.nobg}" \
+          "{input.graph_json}" \
+          "{input.peaks_ic}" \
+          "{wildcards.chrom}" \
+          "{output.interval}" \
+          "{output.bed}" \
+          "{params.env}" \
+          &> "{log}"
+        """
+
+rule flatten_group_done:
+    input:
+        beds=flatten_beds_for_group,
+        intervals=flatten_intervals_for_group
+    output:
+        done="{dir}/results/peaks/{group}/flattened_out/flatten.done"
+    wildcard_constraints:
+        dir=".+?",
+        group="[^/]+"
+    threads: 1
+    resources:
+        mem_mb=1000,
+        runtime=10
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "$(dirname {output.done})"
+        echo "OK" > "{output.done}"
         """
