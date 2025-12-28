@@ -230,6 +230,15 @@ def flatten_beds_for_group(wc):
         dir=wc.dir, group=wc.group, chrom=CHROMOSOMES
     )
 
+def missing_ics_for_group(wc):
+    return expand(
+        "{dir}/results/peaks/{group}/flattened_out/missing/{chrom}_missing.intervalcollection",
+        dir=wc.dir,
+        group=wc.group,
+        chrom=CHROMOSOMES
+    )
+
+
 EXP_CALLPEAKS_DONE = [
     str(Path(input_dir) / "results" / "peaks" / group / "callpeaks.done")
     for (input_dir, group) in sorted(EXP_GROUP_KEYS)
@@ -255,6 +264,10 @@ EXP_FLATTEN_DONE = [
     for (input_dir, group) in sorted(EXP_GROUP_KEYS)
 ]
 
+EXP_COMPARE_DONE = [
+    str(Path(input_dir) / "results" / "peaks" / group / "flattened_out" / "compare_peaks.done")
+    for (input_dir, group) in sorted(EXP_GROUP_KEYS)
+]
 
 # RULES
 rule all:
@@ -265,7 +278,7 @@ rule all:
         EXP_PVAL_DONE,
         EXP_CONCAT_FASTA,
         EXP_CONCAT_INTERVALS,
-        *(EXP_FLATTEN_DONE if FLATTEN_BEDS else [])
+        *(EXP_FLATTEN_DONE, EXP_COMPARE_DONE if FLATTEN_BEDS else [])
 
 
 
@@ -645,6 +658,59 @@ rule flatten_group_done:
         intervals=flatten_intervals_for_group
     output:
         done="{dir}/results/peaks/{group}/flattened_out/flatten.done"
+    wildcard_constraints:
+        dir=".+?",
+        group="[^/]+"
+    threads: 1
+    resources:
+        mem_mb=1000,
+        runtime=10
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "$(dirname {output.done})"
+        echo "OK" > "{output.done}"
+        """
+rule compare_peaks_one_chrom:
+    input:
+        peaks_ic="{dir}/results/peaks/{group}/{chrom}_max_paths.intervalcollection",
+        bed="{dir}/results/peaks/{group}/flattened_out/beds/{chrom}.bed",
+        interval="{dir}/results/peaks/{group}/flattened_out/intervals/{chrom}.interval",
+        pval_done="{dir}/results/peaks/{group}/callpeaks_pvalues.done"
+    output:
+        missing="{dir}/results/peaks/{group}/flattened_out/missing/{chrom}_missing.intervalcollection"
+    wildcard_constraints:
+        dir=".+?",
+        group="[^/]+",
+        chrom="[^/]+"
+    threads: 1
+    resources:
+        mem_mb=8000,
+        runtime=60,
+        slurm_partition="day"
+    log:
+        "{dir}/results/logs/compare_peaks/{group}.{chrom}.log"
+    params:
+        env=GPC_ENV
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "$(dirname {log})"
+        bash scripts/compare_peaks_one_chrom.sh \
+          "{input.peaks_ic}" \
+          "{input.bed}" \
+          "{input.interval}" \
+          "{wildcards.chrom}" \
+          "{output.missing}" \
+          "{params.env}" \
+          &> "{log}"
+        """
+
+rule compare_peaks_group_done:
+    input:
+        missing=missing_ics_for_group
+    output:
+        done="{dir}/results/peaks/{group}/flattened_out/compare_peaks.done"
     wildcard_constraints:
         dir=".+?",
         group="[^/]+"
