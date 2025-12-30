@@ -330,36 +330,6 @@ rule gam_to_json:
         """
 
 
-# def inputs_for_group(wildcards):
-#     """Return the list of filtered JSONs for a specific (dir, group) pair."""
-#     input_dir = wildcards.dir
-#     prefix = wildcards.group
-#     key = (input_dir, prefix)
-#     if key not in GROUPS_BY_DIR:
-#         raise ValueError(f"No filtered JSONs found for dir={input_dir}, group={prefix}")
-#     return GROUPS_BY_DIR[key]
-
-
-# rule combine_jsons:
-#     input:
-#         jsons=inputs_for_group
-#     output:
-#         combined="{dir}/results/json_combined/{group}/{group}_combined.json"
-#     wildcard_constraints:
-#         dir=".+?",
-#         group="[^/]+"
-#     threads: 1
-#     resources:
-#         mem_mb=50000,
-#         runtime=120
-#     log:
-#         "logs/slurm/combine_jsons/{group}_{dir}.log"
-#     shell:
-#         r"""
-#         mkdir -p "$(dirname {log})"
-#         bash {CONCAT_JSON_SCRIPT} {output.combined} {input.jsons} &> {log}
-#         """
-
 rule combine_jsons: 
     input: 
         jsons=inputs_for_group 
