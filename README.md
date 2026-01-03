@@ -8,7 +8,7 @@ This pipeline processes `.gam` files using **vg / graph-peak-caller** to call pe
 - Snakemake
 - SLURM cluster
 - `vg` executable (path set in `config/config.yaml`)
-- `graph_peak_caller` available in the configured environment
+- `graph-peak-caller` available in the configured environment
 
 ---
 
@@ -17,9 +17,9 @@ Edit `config/config.yaml`:
 
 - `input_dirs`: directories containing `.gam` files
 - `vg_path`: path to the `vg` executable
-- `graph_dir`: directory containing graph files
+- `graph_dir`: directory containing graph files (.vg, .xg, .gcsa, etc)
 - `chromosomes`: list of chromosomes
-- `gpc_env`: conda/venv path for graph-peak-caller (optional)
+- `gpc_env`: path to conda environment containing graph-peak-caller 
 
 ---
 
@@ -40,6 +40,8 @@ nohup snakemake \
 disown
 ```
 ## Run pipeline with linear BED output (optional)
+
+To run this step, make sure that your graph-peak-caller has been correctly modified.
 
 ```bash
 snakemake --profile profiles/slurm/ --config flatten_beds=True
