@@ -1,6 +1,6 @@
 # Graph Peak Calling Snakemake Pipeline
 
-This pipeline processes `.gam` files using **vg / graph-peak-caller** to call peaks on graph genomes, with an optional step to **flatten graph peaks onto a linear reference (BED output)**.
+This pipeline processes `.gam` files using **vg** and **graph-peak-caller** to call peaks on graph genomes, with an optional step to **flatten graph peaks onto a linear reference (BED output)**.
 
 ---
 
@@ -8,6 +8,7 @@ This pipeline processes `.gam` files using **vg / graph-peak-caller** to call pe
 
 <img src="docs/pipeline_rulegraph.svg" alt="Pipeline Workflow" width="600">
 
+*Visualization generated with [snakevision](https://github.com/OpenOmics/snakevision)*
 
 ---
 
