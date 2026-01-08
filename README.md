@@ -4,6 +4,13 @@ This pipeline processes `.gam` files using **vg / graph-peak-caller** to call pe
 
 ---
 
+## Workflow Visualization
+
+<img src="docs/pipeline_rulegraph.svg" alt="Pipeline Workflow" width="600">
+
+
+---
+
 ## Requirements
 - Snakemake
 - SLURM cluster
