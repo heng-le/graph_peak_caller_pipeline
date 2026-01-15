@@ -1,6 +1,13 @@
 input_dirs:
-  - /gpfs/gibbs/pi/gerstein/hc865/downloads/histone_graph_calling/sm_test
-  - /gpfs/gibbs/pi/gerstein/hc865/downloads/histone_graph_calling/sm_test_2
+  - /gpfs/gibbs/pi/gerstein/hc865/downloads/H3K4me3_graph_calling/adrenal_gland
+  - /gpfs/gibbs/pi/gerstein/hc865/downloads/H3K4me3_graph_calling/ascending_aorta
+  - /gpfs/gibbs/pi/gerstein/hc865/downloads/H3K4me3_graph_calling/body_of_pancreas
+  - /gpfs/gibbs/pi/gerstein/hc865/downloads/H3K4me3_graph_calling/breast_epithelium
+  - /gpfs/gibbs/pi/gerstein/hc865/downloads/H3K4me3_graph_calling/coronary_artery
+  - /gpfs/gibbs/pi/gerstein/hc865/downloads/H3K4me3_graph_calling/esophagus_muscularis_mucosa
+  - /gpfs/gibbs/pi/gerstein/hc865/downloads/H3K4me3_graph_calling/esophagus_squamous_epithelium
+  - /gpfs/gibbs/pi/gerstein/hc865/downloads/H3K4me3_graph_calling/gastrocnemius_medialis
+  - /gpfs/gibbs/pi/gerstein/hc865/downloads/H3K4me3_graph_calling/gastroesophageal_sphincter
 
 log_dir: logs/slurm
 filter_script: scripts/filter_gam.sh

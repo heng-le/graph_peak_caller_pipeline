@@ -340,7 +340,7 @@ rule combine_jsons:
         group="[^/]+" 
     threads: 1 
     resources: 
-        mem_mb=50000, 
+        mem_mb=100000, 
         runtime=120 
     log: "logs/slurm/combine_jsons/{group}_{dir}.log" 
 
