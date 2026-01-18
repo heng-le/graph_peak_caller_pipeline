@@ -33,8 +33,8 @@ Edit `config/config.yaml`:
 
 ## Run pipeline (graph peaks only)
 
-Run Snakemake from a *login* node (not a compute node and not via **sbatch**). Make sure your current working directory is the Snakemake project root.
-
+Run Snakemake from a *login* node (not a compute node and not via **sbatch**). Make sure your current working directory is the Snakemake project root. The `--jobs` flag is to limit the number of concurrent jobs running simultaneously. 
+`
 ```bash
 snakemake --profile profiles/slurm/
 ```
@@ -44,6 +44,7 @@ nohup snakemake \
   --profile profiles/slurm/ \
   --rerun-incomplete \
   --keep-going \
+  --jobs 10 \
   > snakemake.flatten.nohup.log 2>&1 &
 disown
 ```
@@ -61,6 +62,7 @@ nohup snakemake \
   --config flatten_beds=True \
   --rerun-incomplete \
   --keep-going \
+  --jobs 10 \
   > snakemake.flatten.nohup.log 2>&1 &
 disown
 ```

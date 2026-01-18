@@ -367,7 +367,7 @@ rule split_by_chromosome:
     params:
         chromosomes=",".join(CHROMOSOMES),
         graph_dir=lambda wc: str(Path(config["graph_dir"]) / group_to_enc(wc.group)) + "/",
-        env="/gpfs/gibbs/pi/gerstein/hc865/cvenv"
+        env=GPC_ENV
     shell:
         r"""
         mkdir -p "$(dirname {log})"
