@@ -7,14 +7,14 @@ metrics="$1"
 chromosomes_csv="$2"
 graph_dir="$3"
 out_dir="$4"
-read_length="$5"
-env_path="$6"
-threads="$7"
-done_file="$8"
+env_path="$5"
+threads="$6"
+done_file="$7"
 
 mkdir -p "$(dirname "$done_file")" "$out_dir"
 
-fragment_length="$(awk -F'\t' '$1=="read_length"{print $2}' "$metrics" | tail -n 1)"
+read_length="$(awk -F'\t' '$1=="read_length"{print $2}' "$metrics" | tail -n 1)"
+fragment_length="$(awk -F'\t' '$1=="fragment_length"{print $2}' "$metrics" | tail -n 1)"
 skip_tissue="$(awk -F'\t' '$1=="skip_tissue"{print $2}' "$metrics" | tail -n 1)"
 
 if [[ -z "${skip_tissue:-}" ]]; then
@@ -27,8 +27,8 @@ if [[ "$skip_tissue" == "True" || "$skip_tissue" == "true" ]]; then
   exit 0
 fi
 
-if [[ -z "${fragment_length:-}" || "$fragment_length" == "NA" ]]; then
-  echo "ERROR: fragment length missing/NA in $metrics" >&2
+if [[ -z "${read_length:-}" || -z "${fragment_length:-}" || "$fragment_length" == "NA" ]]; then
+  echo "ERROR: read_length/fragment_length missing or fragment_length=NA in $metrics" >&2
   exit 1
 fi
 

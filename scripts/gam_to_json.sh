@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$#" -ne 3 ]]; then
-  echo "Usage: $0 INPUT_GAM OUTPUT_JSON VG_BIN" >&2
+if [[ "$#" -ne 4 ]]; then
+  echo "Usage: $0 INPUT_GAM OUTPUT_JSON VG_BIN OUTPUT_READ_LENGTH" >&2
   exit 2
 fi
 
 input_gam="$1"
 output_json="$2"
 VG_BIN="$3"
+output_read_length="$4"
 
 if [[ ! -f "$input_gam" ]]; then
   echo "ERROR: input not found: $input_gam" >&2
@@ -21,7 +22,9 @@ if [[ ! -x "$VG_BIN" ]]; then
 fi
 
 mkdir -p "$(dirname "$output_json")"
+mkdir -p "$(dirname "$output_read_length")"
 
 tmp="${output_json}.tmp.$$"
 "$VG_BIN" view -aj "$input_gam" > "$tmp"
+python3 scripts/infer_read_length.py "$tmp" "$output_read_length"
 mv -f "$tmp" "$output_json"

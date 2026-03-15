@@ -1,6 +1,7 @@
 from pathlib import Path
 import re
 from collections import defaultdict
+from collections import Counter
 
 configfile: "config/config.yaml"
 
@@ -17,7 +18,6 @@ GRAPH_DIR = config.get("graph_dir", "")
 CHROMOSOMES = config.get("chromosomes", [])
 GPC_ENV = config.get("gpc_env", "")
 GENOME_SIZE = int(config.get("genome_size", 3100000000))
-READ_LENGTH = int(config.get("read_length", 101))
 FLATTEN_BEDS = config.get("flatten_beds", False)
 VG_PATH = config.get("vg_path", "")
 
@@ -157,6 +157,14 @@ def inputs_for_group(wildcards):
     if key not in GROUPS_BY_DIR: 
         raise ValueError(f"No filtered JSONs found for dir={input_dir}, group={prefix}") 
     return GROUPS_BY_DIR[key] 
+
+def read_length_path_from_json(json_path: str) -> str:
+    json_path = Path(json_path)
+    stem = json_path.name.removesuffix("_filtered.json")
+    return str(json_path.parent.parent / "metrics" / "read_length" / f"{stem}.txt")
+
+def read_length_inputs_for_group(wildcards):
+    return [read_length_path_from_json(p) for p in inputs_for_group(wildcards)]
 
 def exp_group_to_control(group: str) -> str:
     """Convert EXP group name to matching CONTROL group name by token replacement."""
@@ -310,7 +318,8 @@ rule gam_to_json:
     input:
         gam="{dir}/{stem}_filtered.gam"
     output:
-        json="{dir}/results/json/{stem}_filtered.json"
+        json="{dir}/results/json/{stem}_filtered.json",
+        read_length="{dir}/results/metrics/read_length/{stem}.txt"
     threads: 1
     resources:
         mem_mb=4000,
@@ -325,8 +334,8 @@ rule gam_to_json:
     shell:
         r"""
         set -euo pipefail
-        mkdir -p "$(dirname "{output.json}")" "$(dirname "{log}")"
-        bash scripts/gam_to_json.sh "{input.gam}" "{output.json}" "{params.vg_bin}" &> "{log}"
+        mkdir -p "$(dirname "{output.json}")" "$(dirname "{output.read_length}")" "$(dirname "{log}")"
+        bash scripts/gam_to_json.sh "{input.gam}" "{output.json}" "{params.vg_bin}" "{output.read_length}" &> "{log}"
         """
 
 
@@ -340,8 +349,9 @@ rule combine_jsons:
         group="[^/]+" 
     threads: 1 
     resources: 
-        mem_mb=100000, 
-        runtime=120 
+        mem_mb=600000, 
+        runtime=240,
+        slurm_partition="bigmem"
     log: "logs/slurm/combine_jsons/{group}_{dir}.log" 
 
     run: cat_json_files(input.jsons, output.combined)
@@ -399,6 +409,43 @@ rule unique_read_count_exp:
         bash scripts/unique_read_count.sh {input.combined} {output.unique_read_count} &> {log}
         """
 
+rule aggregate_read_length_exp:
+    input:
+        read_lengths=read_length_inputs_for_group
+    output:
+        read_length="{dir}/results/metrics/{group}/read_length.txt"
+    wildcard_constraints:
+        dir=".+?",
+        group="[^/]+"
+    threads: 1
+    resources:
+        mem_mb=2000,
+        runtime=30
+    log:
+        "{dir}/results/logs/metrics/{group}.read_length.log"
+    run:
+        values = []
+        for path in input.read_lengths:
+            text = Path(path).read_text().strip()
+            if not text:
+                continue
+            values.append(int(text))
+
+        if not values:
+            raise ValueError(f"No read lengths found for dir={wildcards.dir}, group={wildcards.group}")
+
+        counts = Counter(values)
+        read_length = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+
+        Path(output.read_length).parent.mkdir(parents=True, exist_ok=True)
+        Path(log[0]).parent.mkdir(parents=True, exist_ok=True)
+        Path(output.read_length).write_text(f"{read_length}\n")
+        Path(log[0]).write_text(
+            "Aggregated read lengths: "
+            + ", ".join(f"{value}x{count}" for value, count in sorted(counts.items()))
+            + f"\nSelected read length: {read_length}\n"
+        )
+
 rule estimate_shift_exp:
     input:
         split=expand(
@@ -408,7 +455,7 @@ rule estimate_shift_exp:
         )
     output:
         logtxt="{dir}/results/metrics/{group}/estimate_shift_exp.txt",
-        read_length="{dir}/results/metrics/{group}/read_length.txt",
+        fragment_length="{dir}/results/metrics/{group}/fragment_length.txt",
         skipflag="{dir}/results/metrics/{group}/skip_tissue.txt"
     wildcard_constraints:
         dir=".+?",
@@ -430,7 +477,7 @@ rule estimate_shift_exp:
           "{params.prefix}" \
           "{params.env}" \
           "{output.logtxt}" \
-          "{output.read_length}" \
+          "{output.fragment_length}" \
           "{output.skipflag}"
         """
 
@@ -438,6 +485,7 @@ rule write_exp_metrics:
     input:
         unique="{dir}/results/metrics/{group}/unique_read_count.txt",
         readlen="{dir}/results/metrics/{group}/read_length.txt",
+        fragmentlen="{dir}/results/metrics/{group}/fragment_length.txt",
         skip="{dir}/results/metrics/{group}/skip_tissue.txt"
     output:
         metrics="{dir}/results/metrics/{group}/exp_metrics.txt"
@@ -459,10 +507,11 @@ rule write_exp_metrics:
 
         unique_reads = Path(input.unique).read_text().strip()
         read_length  = Path(input.readlen).read_text().strip()
+        fragment_length = Path(input.fragmentlen).read_text().strip()
         skip_tissue  = Path(input.skip).read_text().strip()
 
         Path(output.metrics).write_text(
-            f"unique_reads\t{unique_reads}\nread_length\t{read_length}\nskip_tissue\t{skip_tissue}\n"
+            f"unique_reads\t{unique_reads}\nread_length\t{read_length}\nfragment_length\t{fragment_length}\nskip_tissue\t{skip_tissue}\n"
         )
         Path(log[0]).write_text(f"Wrote {output.metrics}\n")
 
@@ -494,7 +543,6 @@ rule callpeaks_exp:
         ctrl_prefix=control_prefix,
         out_dir=lambda wc: str(Path(wc.dir) / "results" / "peaks" / wc.group),
         genome_size=GENOME_SIZE,
-        read_length=READ_LENGTH,
         env=GPC_ENV
     shell:
         r"""
@@ -507,7 +555,6 @@ rule callpeaks_exp:
           "{params.ctrl_prefix}" \
           "{params.out_dir}" \
           "{params.genome_size}" \
-          "{params.read_length}" \
           "{params.env}" \
           "{threads}" \
           "{output.done}" \
@@ -540,7 +587,6 @@ rule callpeaks_pvalues_exp:
         chromosomes=",".join(CHROMOSOMES),
         graph_dir=lambda wc: graph_dir_for_group(wc.group),
         out_dir=lambda wc: str(Path(wc.dir) / "results" / "peaks" / wc.group),
-        read_length=READ_LENGTH,
         env=GPC_ENV
     shell:
         r"""
@@ -550,7 +596,6 @@ rule callpeaks_pvalues_exp:
           "{params.chromosomes}" \
           "{params.graph_dir}" \
           "{params.out_dir}" \
-          "{params.read_length}" \
           "{params.env}" \
           "{threads}" \
           "{output.done}" \

@@ -8,11 +8,11 @@ graph_dir="$2"
 prefix="$3"        
 env_dir="$4"       
 out_log="$5"      
-out_readlen="$6"   
+out_fragmentlen="$6"   
 out_skip="$7"      
 
 mkdir -p "$(dirname "$out_log")"
-mkdir -p "$(dirname "$out_readlen")"
+mkdir -p "$(dirname "$out_fragmentlen")"
 mkdir -p "$(dirname "$out_skip")"
 
 if [[ -n "${env_dir}" && -d "${env_dir}" ]]; then
@@ -32,10 +32,10 @@ set -e
 # Parse output for "Found shift: N"
 if grep -q "Found shift:" "${out_log}"; then
   shift_val="$(grep "Found shift:" "${out_log}" | tail -n 1 | awk -F'Found shift: ' '{print $2}' | awk '{print $1}')"
-  echo "${shift_val}" > "${out_readlen}"
+  echo "${shift_val}" > "${out_fragmentlen}"
   echo "False" > "${out_skip}"
 else
-  echo "NA" > "${out_readlen}"
+  echo "NA" > "${out_fragmentlen}"
   echo "True" > "${out_skip}"
 fi
 

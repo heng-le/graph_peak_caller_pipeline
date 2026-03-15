@@ -12,7 +12,6 @@ env_path="${6:-}"    # optional conda env path
 
 mkdir -p "$(dirname "$out_missing")"
 
-# Optional env activation
 if [[ -n "${env_path:-}" && -d "$env_path" ]]; then
   conda activate "$env_path"
 fi
@@ -49,10 +48,8 @@ echo "[compare_peaks] bed=$bed"
 echo "[compare_peaks] interval=$interval"
 echo "[compare_peaks] out_missing=$out_missing"
 
-# Run compare
 graph_peak_caller compare_peaks "$peaks_ic" "$bed" "$interval" "$chrom"
 
-# If tool wrote the default name, normalize to the requested output path
 if [[ -f "${chrom}_missing.intervalcollection" ]]; then
   if [[ "$out_missing" != "${workdir}/${chrom}_missing.intervalcollection" ]]; then
     mv -f "${chrom}_missing.intervalcollection" "$out_missing"

@@ -10,15 +10,15 @@ exp_prefix="$4"
 ctrl_prefix="$5"
 out_dir="$6"
 genome_size="$7"
-read_length="$8"
-env_path="$9"
-threads="${10}"
-done_file="${11}"
+env_path="$8"
+threads="${9}"
+done_file="${10}"
 
 mkdir -p "$(dirname "$done_file")" "$out_dir"
 
 unique_reads="$(awk -F'\t' '$1=="unique_reads"{print $2}' "$metrics" | tail -n 1)"
-fragment_length="$(awk -F'\t' '$1=="read_length"{print $2}' "$metrics" | tail -n 1)"
+read_length="$(awk -F'\t' '$1=="read_length"{print $2}' "$metrics" | tail -n 1)"
+fragment_length="$(awk -F'\t' '$1=="fragment_length"{print $2}' "$metrics" | tail -n 1)"
 skip_tissue="$(awk -F'\t' '$1=="skip_tissue"{print $2}' "$metrics" | tail -n 1)"
 
 if [[ -z "${skip_tissue:-}" ]]; then
@@ -31,8 +31,8 @@ if [[ "$skip_tissue" == "True" || "$skip_tissue" == "true" ]]; then
   exit 0
 fi
 
-if [[ -z "${unique_reads:-}" || -z "${fragment_length:-}" ]]; then
-  echo "ERROR: unique_reads/read_length missing in $metrics" >&2
+if [[ -z "${unique_reads:-}" || -z "${read_length:-}" || -z "${fragment_length:-}" ]]; then
+  echo "ERROR: unique_reads/read_length/fragment_length missing in $metrics" >&2
   exit 1
 fi
 
